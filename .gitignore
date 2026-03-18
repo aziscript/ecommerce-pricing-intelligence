@@ -56,3 +56,4 @@ node_modules/
 # Claude Code internal
 memory/
 .claude/
+lake/.export_state.json
