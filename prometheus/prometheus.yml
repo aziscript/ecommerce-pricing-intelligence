@@ -1,0 +1,105 @@
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  scrape_timeout:      10s
+  external_labels:
+    environment: 'local'
+    platform:    'pricing-intelligence'
+
+# ── Alerting (placeholder — add Alertmanager when needed) ────────────────────
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+# ── Rule files (placeholder) ──────────────────────────────────────────────────
+# rule_files:
+#   - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+
+  # ── Prometheus self-monitoring ────────────────────────────────────────────
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # ── Kafka consumer lag + broker metrics ───────────────────────────────────
+  # Exporter: danielqsj/kafka-exporter  (port 9308, default)
+  # To add to docker-compose:
+  #   kafka-exporter:
+  #     image: danielqsj/kafka-exporter:latest
+  #     command: ["--kafka.server=kafka:29092", "--web.listen-address=:9308"]
+  #     ports: ["9308:9308"]
+  #     networks: [pricing-platform]
+  - job_name: 'kafka-exporter'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+        labels:
+          service: 'kafka'
+
+  # ── Kafka JMX metrics ─────────────────────────────────────────────────────
+  # Exporter: prometheus/jmx_exporter as a Java agent on the Kafka container
+  # Mount jmx_prometheus_javaagent.jar + kafka.yml config and add to KAFKA_OPTS:
+  #   KAFKA_OPTS: "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent.jar=7071:/opt/jmx_exporter/kafka.yml"
+  - job_name: 'kafka-jmx'
+    static_configs:
+      - targets: ['kafka:7071']
+        labels:
+          service: 'kafka'
+
+  # ── Zookeeper JMX metrics ─────────────────────────────────────────────────
+  # Same JMX exporter approach; expose on port 7072 in the zookeeper container.
+  # Add to ZOOKEEPER_OPTS:
+  #   ZOOKEEPER_OPTS: "-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent.jar=7072:/opt/jmx_exporter/zookeeper.yml"
+  - job_name: 'zookeeper'
+    static_configs:
+      - targets: ['zookeeper:7072']
+        labels:
+          service: 'zookeeper'
+
+  # ── MinIO cluster metrics (built-in Prometheus endpoint) ──────────────────
+  # MinIO exposes metrics natively; no exporter needed.
+  # For authenticated clusters generate a bearer token with:
+  #   mc admin prometheus generate <alias>
+  # then uncomment and set:
+  #   authorization:
+  #     credentials:
+  #       username: ''
+  #       password: '<bearer-token>'
+  - job_name: 'minio'
+    metrics_path: /minio/v2/metrics/cluster
+    scheme: http
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          service: 'minio'
+
+  # ── MinIO node metrics ────────────────────────────────────────────────────
+  - job_name: 'minio-node'
+    metrics_path: /minio/v2/metrics/node
+    scheme: http
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          service: 'minio'
+
+  # ── Container metrics (cAdvisor) ──────────────────────────────────────────
+  # Provides per-container CPU, memory, network, and disk I/O.
+  # To add to docker-compose:
+  #   cadvisor:
+  #     image: gcr.io/cadvisor/cadvisor:latest
+  #     privileged: true
+  #     volumes:
+  #       - /:/rootfs:ro
+  #       - /var/run:/var/run:ro
+  #       - /sys:/sys:ro
+  #       - /var/lib/docker/:/var/lib/docker:ro
+  #     ports: ["8080:8080"]
+  #     networks: [pricing-platform]
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: 'cadvisor'

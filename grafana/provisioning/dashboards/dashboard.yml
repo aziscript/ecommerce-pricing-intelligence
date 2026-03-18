@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name:    'Pricing Intelligence'
+    orgId:   1
+    folder:  'Pricing Intelligence'
+    folderUid: 'pricing-intelligence'
+    type:    file
+    disableDeletion:      false
+    updateIntervalSeconds: 30
+    allowUiUpdates:       true
+    options:
+      path:                    /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
