@@ -91,6 +91,8 @@ Competitor pricing data is typically the last piece to be solved — and the mos
 - **Competitor price monitoring** — tracks 3 competitors (TechMart, GadgetZone, ElectroHub) across all 30 products, computing price-gap percentages in real time
 - **Automated data quality checks** — 13 assertions run on demand across inventory, clickstream, competitor prices, and recommendation tables
 - **Business analytics** — 4 Jupyter notebooks covering conversion funnel analysis, RFM customer segmentation, price elasticity simulation, and demand forecasting with inventory implications
+- **dbt transformation layer** — 7 models (3 staging views + 4 mart tables) with schema tests, column descriptions, and source definitions covering the full analytical layer
+- **Parquet data lake** — incremental export of all event streams to MinIO as date-partitioned Parquet files, queryable with Athena or DuckDB
 
 ---
 
@@ -110,6 +112,9 @@ Competitor pricing data is typically the last piece to be solved — and the mos
 | **pandas** | 2.1+ | DataFrame transforms in the analytics layer |
 | **Plotly** | 5.18+ | Interactive charts across dashboard and notebooks |
 | **Jupyter** | — | Analytical notebooks for business reporting |
+| **dbt** | 1.9+ | Transformation layer — staging views and mart tables with schema tests |
+| **boto3** | 1.34+ | S3-compatible client for MinIO Parquet uploads |
+| **PyArrow** | 14+ | Parquet serialisation for the data lake writer |
 | **Docker Compose** | — | Single-command infrastructure orchestration |
 
 ---
@@ -193,6 +198,30 @@ python quality/data_quality.py
 python quality/data_quality.py --verbose
 ```
 
+### 8. Run dbt models
+
+```bash
+cd dbt_models
+dbt debug --profiles-dir .      # verify connection
+dbt run --profiles-dir .        # build all views and tables
+dbt test --profiles-dir .       # run schema tests
+```
+
+### 9. Export events to the data lake
+
+```bash
+# Install dependencies
+pip install -r lake/requirements.txt
+
+# Export all new data to MinIO as Parquet
+python lake/parquet_writer.py
+
+# Reset state and re-export everything from scratch
+python lake/parquet_writer.py --reset
+```
+
+Set `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, and `MINIO_BUCKET` in your environment or a `.env` file before running. Defaults work with the local Docker Compose setup.
+
 ### 7. Generate the analytics notebooks
 
 ```bash
@@ -244,8 +273,26 @@ ecommerce-pricing-intelligence/
 ├── prometheus/
 │   └── prometheus.yml              # Scrape configuration
 │
-└── dbt_models/
-    └── placeholder.txt             # Reserved for dbt transformation layer
+├── dbt_models/
+│   ├── dbt_project.yml             # dbt project config (name, paths, materialisation)
+│   ├── profiles.yml                # PostgreSQL connection profile
+│   └── models/
+│       ├── staging/
+│       │   ├── _sources.yml        # Source table definitions and descriptions
+│       │   ├── _stg_models.yml     # Staging model schema tests
+│       │   ├── stg_clickstream.sql # Cleaned events + hour_of_day, day_of_week
+│       │   ├── stg_inventory.sql   # Cleaned inventory events + absolute_quantity
+│       │   └── stg_competitor_prices.sql  # Latest price per product × competitor
+│       └── marts/
+│           ├── _mart_models.yml    # Mart model schema tests
+│           ├── daily_funnel_metrics.sql   # Daily CVR by category
+│           ├── product_performance.sql    # Revenue, traffic, stock per product
+│           ├── pricing_analysis.sql       # Price position + latest recommendation
+│           └── hourly_demand.sql          # Hourly purchase volume per category
+│
+└── lake/
+    ├── parquet_writer.py           # Incremental PostgreSQL → MinIO Parquet export
+    └── requirements.txt            # boto3, pandas, pyarrow, psycopg
 ```
 
 ---
@@ -312,6 +359,62 @@ Aggregates hourly purchase volumes by category, applies 1-hour and 3-hour moving
 
 ---
 
+## dbt Transformation Layer
+
+The `dbt_models/` directory implements a two-layer transformation architecture on top of the raw PostgreSQL tables.
+
+**Staging layer** (`+materialized: view`) — thin wrappers that clean types, rename columns for consistency, and add derived columns. Views mean zero storage overhead and always reflect the latest raw data.
+
+| Model | Source table | Key additions |
+|---|---|---|
+| `stg_clickstream` | `clickstream_events` | `hour_of_day`, `day_of_week` extracted from timestamp |
+| `stg_inventory` | `inventory_events` | `absolute_quantity = ABS(quantity_change)` |
+| `stg_competitor_prices` | `competitor_prices` | Deduplicated to latest per product × competitor |
+
+**Mart layer** (`+materialized: table`) — business-ready aggregates that power the Streamlit dashboard and Jupyter notebooks. Replacing the raw SQL in notebooks with `{{ ref('...') }}` refs means analysts never touch the source tables directly.
+
+| Model | Answers |
+|---|---|
+| `daily_funnel_metrics` | What was our conversion rate by category on each day? |
+| `product_performance` | Which products generate the most revenue, and are they in stock? |
+| `pricing_analysis` | Are we cheaper or pricier than competitors, and what does the engine recommend? |
+| `hourly_demand` | Which category drives the most purchases hour by hour? |
+
+Each model has a corresponding `.yml` schema file with column descriptions and `not_null`, `unique`, and `accepted_values` tests.
+
+```bash
+cd dbt_models
+dbt debug --profiles-dir .    # verify connection
+dbt run --profiles-dir .      # materialise all models
+dbt test --profiles-dir .     # run all schema tests
+dbt docs generate --profiles-dir . && dbt docs serve  # interactive lineage
+```
+
+---
+
+## Data Lake (MinIO / Parquet)
+
+`lake/parquet_writer.py` provides incremental export of the three event streams from PostgreSQL to MinIO as date-partitioned Parquet files.
+
+**Layout in MinIO:**
+```
+data-lake/
+  clickstream/date=2024-03-15/events.parquet
+  inventory/date=2024-03-15/events.parquet
+  competitor_prices/date=2024-03-15/events.parquet
+```
+
+**How it works:**
+1. Reads `.export_state.json` to find the last exported timestamp per table
+2. Queries only new rows (`WHERE timestamp > last_exported`) to keep each run fast
+3. Groups results by date and serialises each partition to Parquet via PyArrow
+4. Uploads to MinIO using the boto3 S3-compatible client
+5. Updates state on success so the next run picks up exactly where this one left off
+
+Run `python lake/parquet_writer.py --reset` to wipe state and re-export the full history. The Parquet layout is compatible with Amazon Athena, DuckDB, and Apache Spark partition discovery — swap `MINIO_ENDPOINT` for an S3 bucket URL to go to production without any code changes.
+
+---
+
 ## Observability
 
 **Grafana** is available at **http://localhost:3000**. The `pipeline_health.json` dashboard is auto-provisioned at startup via the `provisioning/` directory and covers pipeline message throughput, consumer group lag, pricing engine cycle metrics, and database connection health.
@@ -353,8 +456,8 @@ The current processor handles stateless per-event transforms well, but patterns 
 **3. Kubernetes for container orchestration**
 Docker Compose is fine locally, but scaling the stream processor to handle 10× traffic means running multiple instances of each consumer. Kubernetes with a Kafka-aware HPA would handle that automatically, and a Helm chart would make deployment reproducible across environments.
 
-**4. dbt for the transformation layer**
-The `dbt_models/` directory is already a placeholder for this. Today all analytical transforms live inside the Jupyter notebooks as raw SQL. Moving them to dbt gives version-controlled, tested, documented transformations that can be scheduled and monitored independently of the notebooks.
+**4. Schedule dbt with Airflow or dbt Cloud**
+dbt models run manually today (`dbt run`). In production, an Airflow DAG or dbt Cloud job would run the models on a schedule, send Slack alerts on failures, and expose model-level lineage through the dbt docs site — giving every analyst a self-service, always-current data dictionary.
 
 **5. Real S3 instead of MinIO**
 MinIO faithfully emulates the S3 API and is excellent for local development. In production, replacing it with S3 (or GCS) gives lifecycle policies, cross-region replication, and native integration with Athena and Glue — enabling a proper data lakehouse layer on top of the raw event archives.

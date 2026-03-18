@@ -1,0 +1,99 @@
+version: 2
+
+models:
+  - name: daily_funnel_metrics
+    description: >
+      Daily conversion funnel metrics by product category.
+      Counts unique sessions that reached each funnel stage and calculates
+      the overall page-view-to-purchase conversion rate per day per category.
+    columns:
+      - name: day
+        description: "Calendar date of the events."
+        tests:
+          - not_null
+      - name: category
+        description: "Product category (or 'unknown' for page_view events without a product)."
+        tests:
+          - not_null
+      - name: page_views
+        description: "Distinct sessions with at least one page_view event."
+      - name: product_views
+        description: "Distinct sessions with at least one product_view event."
+      - name: cart_adds
+        description: "Distinct sessions with at least one add_to_cart event."
+      - name: purchases
+        description: "Distinct sessions with at least one purchase event."
+      - name: conversion_rate
+        description: "purchases / page_views * 100, expressed as a percentage."
+
+  - name: product_performance
+    description: >
+      Per-product revenue, traffic, and inventory summary.
+      Joins the product catalog with rolling KPIs from product_metrics and
+      aggregated stock from inventory_state across all three warehouses.
+    columns:
+      - name: product_id
+        description: "Primary key — one row per product."
+        tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: "Human-readable product name."
+        tests:
+          - not_null
+      - name: category
+        description: "Product category."
+        tests:
+          - not_null
+      - name: total_revenue
+        description: "Cumulative revenue from all purchase events."
+      - name: total_stock_all_warehouses
+        description: "Sum of current_stock across WH-LAGOS, WH-ABUJA, and WH-PH."
+
+  - name: pricing_analysis
+    description: >
+      Per-product pricing intelligence: our price vs competitor range,
+      a computed price_position label, and the latest recommendation from
+      the pricing engine with its confidence score.
+    columns:
+      - name: product_id
+        description: "Primary key — one row per product."
+        tests:
+          - unique
+          - not_null
+      - name: our_price
+        description: "Current base price from the products catalog."
+        tests:
+          - not_null
+      - name: price_position
+        description: "cheaper | competitive | pricier — relative to competitor range."
+        tests:
+          - accepted_values:
+              values: ['cheaper', 'competitive', 'pricier']
+      - name: recommendation
+        description: "Latest engine output: raise, lower, or hold."
+        tests:
+          - accepted_values:
+              values: ['raise', 'lower', 'hold']
+              config:
+                where: "recommendation IS NOT NULL"
+
+  - name: hourly_demand
+    description: >
+      Hourly purchase volume, product views, and cart adds per category.
+      Primary input for the demand forecasting notebook and inventory planning.
+    columns:
+      - name: hour_bucket
+        description: "Timestamp truncated to the hour."
+        tests:
+          - not_null
+      - name: category
+        description: "Product category."
+        tests:
+          - not_null
+      - name: purchases
+        description: "Total purchase events in this hour for this category."
+      - name: product_views
+        description: "Total product_view events in this hour for this category."
+      - name: cart_adds
+        description: "Total add_to_cart events in this hour for this category."

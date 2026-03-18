@@ -1,0 +1,98 @@
+version: 2
+
+models:
+  - name: stg_clickstream
+    description: >
+      Cleaned clickstream events with explicit type casts and two derived time columns
+      (hour_of_day, day_of_week) for efficient downstream aggregations.
+    columns:
+      - name: event_id
+        description: "UUID primary key — unique per event."
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Identifier of the user who triggered the event."
+        tests:
+          - not_null
+      - name: session_id
+        description: "Browser session UUID."
+        tests:
+          - not_null
+      - name: event_type
+        description: "One of: page_view, product_view, add_to_cart, remove_from_cart, purchase."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['page_view', 'product_view', 'add_to_cart', 'remove_from_cart', 'purchase']
+      - name: device_type
+        description: "mobile, desktop, or tablet."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['mobile', 'desktop', 'tablet']
+      - name: hour_of_day
+        description: "Hour extracted from event_timestamp (0–23)."
+        tests:
+          - not_null
+      - name: day_of_week
+        description: "ISO day of week: 1=Monday … 7=Sunday."
+        tests:
+          - not_null
+
+  - name: stg_inventory
+    description: >
+      Cleaned inventory audit events with an absolute_quantity column for
+      directional analysis without signed-integer handling in downstream models.
+    columns:
+      - name: event_id
+        description: "UUID primary key."
+        tests:
+          - unique
+          - not_null
+      - name: product_id
+        description: "Product whose stock changed."
+        tests:
+          - not_null
+      - name: warehouse_id
+        description: "One of: WH-LAGOS, WH-ABUJA, WH-PH."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['WH-LAGOS', 'WH-ABUJA', 'WH-PH']
+      - name: quantity_change
+        description: "Signed delta — positive for restocks, negative for sales."
+        tests:
+          - not_null
+      - name: absolute_quantity
+        description: "ABS(quantity_change) — always positive, useful for volume metrics."
+        tests:
+          - not_null
+
+  - name: stg_competitor_prices
+    description: >
+      Latest competitor price observation per product per competitor.
+      Uses DISTINCT ON to deduplicate to a single current price per pair.
+    columns:
+      - name: product_id
+        description: "Product being monitored."
+        tests:
+          - not_null
+      - name: competitor_name
+        description: "One of: TechMart, GadgetZone, ElectroHub."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['TechMart', 'GadgetZone', 'ElectroHub']
+      - name: competitor_price
+        description: "Most recently observed competitor price."
+        tests:
+          - not_null
+      - name: our_price
+        description: "Our price at time of the latest observation."
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Timestamp of the most recent price check."
+        tests:
+          - not_null
